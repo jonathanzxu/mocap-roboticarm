@@ -13,8 +13,14 @@ def normalize(v):
        return v
     return v / norm
 
+def lowpass(new, old):
+    p1 = 0.7
+    p2 = 0.3
+    return int(p1 * old + p2 * new)
+
 #markers = 2d list with double xyz positions of each marker
 def calculateangles(markers):
+    global oldangles
     m0 = np.array(markers[0], dtype=float)
     m1 = np.array(markers[1], dtype=float)
     m2 = np.array(markers[2], dtype=float)
@@ -122,7 +128,10 @@ def calculateangles(markers):
     #print(f"3 to 4 angles - alpha: {alpha34}° beta: {beta34}° gamma: {gamma34}°")
 
     #print(f"Approximate angles: Shoulder Rotated ≈ {int(gamma12)}° - Shoulder Tilted ≈ {int(alpha12)}° - Elbow Tilted ≈ {int(alpha23)}° - Wrist Tilted ≈ {int(alpha34 if alpha34 > 0 else (alpha34 + 360))}° - Wrist Rotated ≈ {-1*int(gamma34)}°")
-    return (int(alpha12), int(beta12), int(alpha23), int(alpha34), int(gamma34))
+    #low pass filter
+    newangles = (lowpass(alpha12, oldangles[0]), lowpass(beta12, oldangles[1]), lowpass(alpha23, oldangles[2]), lowpass(alpha34, oldangles[3]), lowpass(gamma34, oldangles[4]))
+    oldangles = newangles
+    return newangles
 
 #import numpy as np
 #import pandas as pd
@@ -136,7 +145,7 @@ o = owl.Context()
 # connect to server with timeout of 10000000 microseconds 
 
 o.open(SERVER, "timeout=10000000") # initialize session
-o.initialize("streaming=1")
+o.initialize("streaming=1 profile=profile-arm")
  
 
 
@@ -164,11 +173,11 @@ ax.axes.set_zlim3d(bottom=-2000, top=2000)
 ax.set_autoscale_on(False)
 
 lastmarkers = [[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0],[0,0,0]]
-
+oldangles = [0,0,0,0,0]
 
 #serial port init
 
-ser = serial.Serial('COM17', baudrate=19200)
+ser = serial.Serial('COM16', baudrate=19200)
 #hello world ping + arm setup
 ser.write(bytearray([255, 13, 1, 0, 64, 64, 64, 69, 69, 69, 69, 69, 39]))
 print(list(ser.read(size=13)))
@@ -234,10 +243,17 @@ ser.write(bytearray([255, 13, 21, 1, 3, 64, 0, 0, 1, 0, 0, 0, 103]))
 ser.write(bytearray([255, 13, 21, 1, 4, 64, 0, 0, 1, 0, 0, 0, 104]))
 ser.write(bytearray([255, 13, 21, 1, 5, 64, 0, 0, 1, 0, 0, 0, 105]))
 print("torque is on.")
-for joint in range(0,6):
-    ser.write(bytearray([255, 13, 21, 1, joint, 112, 0, 0, 208, 7, 0, 0, 106+joint]))
-    ser.write(bytearray([255, 13, 21, 1, joint, 108, 0, 0, 232, 3, 0, 0, 122+joint]))
-    ser.write(bytearray([255, 13, 51, 20, joint, 0, 0, 0, 0, 0, 0, 0, (84+joint)%256]))
+
+for joint in range(1,6):
+    if joint == 2:
+        ser.write(bytearray([255, 13, 21, 1, joint, 112, 0, 0, 208, 7, 0, 0, 106+joint]))
+        ser.write(bytearray([255, 13, 21, 1, joint, 108, 0, 0, 232, 3, 0, 0, 122+joint]))
+        ser.write(bytearray([255, 13, 51, 20, joint, 0, 0, 0, 255, 255, 252, 124, (84+joint+255+255+252+124)%256]))
+    else:
+        ser.write(bytearray([255, 13, 21, 1, joint, 112, 0, 0, 208, 7, 0, 0, 106+joint]))
+        ser.write(bytearray([255, 13, 21, 1, joint, 108, 0, 0, 232, 3, 0, 0, 122+joint]))
+        ser.write(bytearray([255, 13, 51, 20, joint, 0, 0, 0, 0, 0, 0, 0, (84+joint)%256]))
+
 time.sleep(3)
 
 
@@ -245,21 +261,21 @@ def send(shoulder, elbow, forearm, wrist, hand):
     global ser
     speedbytes = (0).to_bytes(4, byteorder='little', signed=True)
     accelbytes = (0).to_bytes(4, byteorder='little', signed=True)
-    shoulder = max(-180, min(180, shoulder))
-    elbow = max(0, min(120, elbow))
-    forearm = max(0, min(180, forearm))
-    wrist = max(70, min(270, wrist))
-    hand = max(-180, min(180, hand))
+    shoulder = int(max(-60, min(60, shoulder)))
+    elbow = int(max(-45, min(90, elbow)))
+    forearm = int(max(0, min(180, forearm)))
+    wrist = int(max(-90, min(90, wrist)))
+    hand = int(max(-90, min(90, hand)))
     #accelbytes = (0).to_bytes(4, byteorder='little', signed=True)
-    for joint in range(2, 3):
+    for joint in range(1, 5):
         ser.write(bytearray([255, 13, 21, 1, joint, 112, 0, 0, speedbytes[0], speedbytes[1], speedbytes[2], speedbytes[3], (147+joint+speedbytes[0]+speedbytes[1]+speedbytes[2]+speedbytes[3])%256]))
         ser.write(bytearray([255, 13, 21, 1, joint, 108, 0, 0, accelbytes[0], accelbytes[1], accelbytes[2], accelbytes[3], (143+joint+accelbytes[0]+accelbytes[1]+accelbytes[2]+accelbytes[3])%256]))
         if joint == 0:
-            angle = int(shoulder*10)
+            angle = int((shoulder-45)*10)
         elif joint == 1:
-            angle = int((90-elbow)*10)
+            angle = int(elbow*-10)
         elif joint == 2:
-            angle = int((90-forearm)*10)
+            angle = int((forearm-90)*10)
         elif joint == 3:
             angle = int(wrist*10)
         elif joint == 4:
@@ -270,11 +286,12 @@ def send(shoulder, elbow, forearm, wrist, hand):
 
 
 #while evt or (o.isOpen() and o.property("initialized")):
+
 def animate(i):   
     global evt
     global lastmarkers
     #print(lastmarkers)
-    t1 = time.time()
+    #t1 = time.time()
     ax.cla()
     ax.axes.set_xlim3d(left=-2000, right=2000)
     ax.axes.set_ylim3d(bottom=-2000, top=2000)
@@ -294,6 +311,7 @@ def animate(i):
     if evt.type_id == owl.Type.FRAME:
         # print markers
         if "markers" in evt:
+            #good = True
             count = 0
             for m in evt.markers:
                 ax.scatter(m.x, m.y, m.z)
@@ -305,10 +323,14 @@ def animate(i):
                 count += 1
             if [0,0,0] not in lastmarkers:
                 angles = calculateangles(lastmarkers)
-                ax.text(-1500,0,0,f"Shoulder Rotated ≈ {angles[0]}°\nShoulder Tilted ≈ {angles[1]}°\nElbow Tilted ≈ {angles[2]}°\nWrist Tilted ≈ {angles[3]}°\nWrist Rotated ≈ {angles[4]}°")
+                ax.text(-1500,0,0,f"Shoulder Rotated ≈ {angles[1]}°\nShoulder Tilted ≈ {angles[0]}°\nElbow Tilted ≈ {angles[2]}°\nWrist Tilted ≈ {angles[3]}°\nWrist Rotated ≈ {angles[4]}°")
                 #if i % 2 == 0:
+                #for joint in range(0, 5):
+                    #if abs(angles[joint] - oldangles[joint]) > 1000:
+                        #good = False
+                #if good or i == 1:
                 send(angles[1], angles[0], angles[2], angles[3], angles[4])
-         
+                    #oldangles = angles
     elif evt.type_id == owl.Type.ERROR:
         # handle errors
         print(evt.name, evt.data)
@@ -318,7 +340,8 @@ def animate(i):
         # done event is sent when master connection stops session
         print("done")
         return
-    t2 = time.time()
+    
+    #t2 = time.time()
     #print(f"Completed 1 iteration in {t2 - t1} seconds.")
 
 

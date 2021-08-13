@@ -125,7 +125,7 @@ l1.pack()
 
 #serial port init
 
-ser = serial.Serial('COM4', baudrate=19200)
+ser = serial.Serial('COM16', baudrate=19200)
 #hello world ping + arm setup
 ser.write(bytearray([255, 13, 1, 0, 64, 64, 64, 69, 69, 69, 69, 69, 39]))
 print(list(ser.read(size=13)))
